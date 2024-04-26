@@ -6,7 +6,16 @@ Console.WriteLine("Searchinng repos in " + currentDir);
 var repos = Directory.GetDirectories("./", "*", SearchOption.TopDirectoryOnly)
     .Where(r => Directory.GetDirectories(r, ".git", SearchOption.TopDirectoryOnly).Any())
     .ToArray();
+if (!repos.Any())
+{
+    Console.WriteLine("No repositories found");
+    return;
+}
+
 Console.WriteLine("Detected repos:" + Environment.NewLine + string.Join(Environment.NewLine, repos));
+Console.WriteLine();
+Console.WriteLine("---PULLING STARTED---");
+Console.WriteLine();
 
 var processes = repos.Select(r => PullWithHandling(r)).ToList();
 var responses = new List<PullResponse>();
@@ -17,22 +26,30 @@ while (processes.Any())
     var response = await finished;
     responses.Add(response);
 
-    Console.WriteLine("---");
     Console.WriteLine(response.Response);
+    Console.WriteLine("---");
+    Console.WriteLine();
 }
+
+Console.WriteLine("---PULLING FINISHED---");
 
 var havingError = responses.Where(r => !r.IsSuccess).Select(r => r.Repo).ToList();
 var havingChanges = responses
     .Where(r => !r.Response.Contains("Already up to date.") &&
                 !havingError.Contains(r.Repo))
-    .Select(r => r.Repo);
+    .Select(r => r.Repo)
+    .ToList();
 
-Console.WriteLine("---Updated---");
-Console.WriteLine(string.Join(Environment.NewLine, havingChanges));
+PrintAsList(havingChanges, "Changes applied");
+PrintAsList(havingError, "Responded error");
 
-Console.WriteLine("---Responded error---");
-Console.WriteLine(string.Join(Environment.NewLine, havingError));
-
+static void PrintAsList(List<string> items, string name)
+{
+    Console.WriteLine();
+    Console.WriteLine($"---{name}---");
+    Console.WriteLine(items.Any() ? string.Join(Environment.NewLine, items) : "no data");
+    Console.WriteLine("---------------------");
+}
 
 static async Task<PullResponse> PullWithHandling(string repoPath)
 {
@@ -48,7 +65,7 @@ static async Task<PullResponse> PullWithHandling(string repoPath)
 
 static async Task<PullResponse> Pull(string repoPath)
 {
-    var process = new Process
+    using var process = new Process
     {
         StartInfo = new ProcessStartInfo
         {
@@ -70,7 +87,7 @@ static async Task<PullResponse> Pull(string repoPath)
 
     var pullResponse = await RunProcessAsync(process, "pull");
 
-    response += Environment.NewLine + pullResponse.Response;
+    response += pullResponse.Response;
 
     return new PullResponse(pullResponse.IsSuccess, repoPath, response);
 }
@@ -81,11 +98,10 @@ static async Task<ProcessResponse> RunProcessAsync(Process process, string args)
     process.Start();
 
     var response = await process.StandardOutput.ReadToEndAsync();
-    if (!string.IsNullOrEmpty(response))
-        return new ProcessResponse(true, response);
-
     var errorResponse = await process.StandardError.ReadToEndAsync();
-    return new ProcessResponse(false, errorResponse);
+    var isSuccess = string.IsNullOrEmpty(errorResponse);
+
+    return new ProcessResponse(isSuccess,  response + errorResponse);
 }
 
 internal record ProcessResponse(bool IsSuccess, string Response);
