@@ -1,5 +1,11 @@
 ﻿using System.Diagnostics;
 
+if (args.Any(a => a == "--debug"))
+{
+    Console.WriteLine("Attaching debugger");
+    Debugger.Launch();
+}
+
 var currentDir = Directory.GetCurrentDirectory();
 Console.WriteLine("Searchinng repos in " + currentDir);
 
