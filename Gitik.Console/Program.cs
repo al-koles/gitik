@@ -1,39 +1,47 @@
-﻿using System.CommandLine;
-using System.Diagnostics;
+﻿using System.Diagnostics;
+using System.Reflection;
+using CommandLine;
+using Gitik.Console;
 
-var rootCommand = new RootCommand("Helper for git.");
+var verbs = LoadVerbs();
+await Parser.Default
+    .ParseArguments(args, verbs)
+    .WithParsedAsync(RunAsync);
 
-var debugOption = new Option<bool>(
-    name: "--debug",
-    description: "Attach debugger to the process"
-);
-var maxPullProcessesOption = new Option<int?>(
-    ["-m", "--max"],
-    () => 10,
-    "Max pull processes");
-
-var pullCommand = new Command("pull", "Execute git pull for repositories in current directory")
+static Type[] LoadVerbs()
 {
-    debugOption,
-    maxPullProcessesOption,
-};
-pullCommand.SetHandler((debug, maxPullProcesses) =>
+    return Assembly.GetExecutingAssembly().GetTypes()
+        .Where(t => t.GetCustomAttribute<VerbAttribute>() != null).ToArray();		 
+}
+
+async Task RunAsync(object obj)
 {
-    Console.WriteLine($"{nameof(debug)}: {debug}");
-    Console.WriteLine($"{nameof(maxPullProcesses)}: {maxPullProcesses}");
-}, debugOption, maxPullProcessesOption);
-rootCommand.AddCommand(pullCommand);
+    switch (obj)
+    {
+        case GitPullCommand c:
+            await ExecutePullAsync(c);
+            break;
+        default:
+            throw new ArgumentException($"Command {obj.GetType()} is not active");
+    }
+}
 
-await rootCommand.InvokeAsync(args);
+async Task ExecutePullAsync(GitPullCommand command)
+{
+    if(command.Debug)
+        AttachDebugger();
+    
+    Console.WriteLine("pull executed");
+}
 
-// Console.ReadLine();
-//
-// if (args.Any(a => a == "--debug"))
-// {
-//     Console.WriteLine("Attaching debugger");
-//     Debugger.Launch();
-// }
-//
+void AttachDebugger()
+{
+    Console.WriteLine("Attaching debugger");
+    Debugger.Launch();
+}
+
+
+
 // var currentDir = Directory.GetCurrentDirectory();
 // Console.WriteLine("Searchinng repos in " + currentDir);
 //
