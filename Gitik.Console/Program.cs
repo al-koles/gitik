@@ -1,53 +1,93 @@
 ﻿using System.Diagnostics;
+using System.Reflection;
+using CommandLine;
+using Gitik.Console;
 
-if (args.Any(a => a == "--debug"))
+var verbs = LoadVerbs();
+await Parser.Default
+    .ParseArguments(args, verbs)
+    .WithParsedAsync(RunAsync);
+
+static Type[] LoadVerbs()
+{
+    return Assembly.GetExecutingAssembly()
+        .GetTypes()
+        .Where(t => t.GetCustomAttribute<VerbAttribute>() != null)
+        .ToArray();
+}
+
+async Task RunAsync(object verb)
+{
+    switch (verb)
+    {
+        case GitPullCommand pullVerb:
+            await ExecutePullAsync(pullVerb);
+            break;
+        default:
+            throw new ArgumentException($"Command {verb.GetType()} is not active");
+    }
+}
+
+async Task ExecutePullAsync(GitPullCommand command)
+{
+    if (command.Debug)
+        AttachDebugger();
+
+    var currentDir = Directory.GetCurrentDirectory();
+    Console.WriteLine("Searchinng repos in " + currentDir);
+
+    var repos = Directory.GetDirectories("./", "*", SearchOption.TopDirectoryOnly)
+        .Where(r => Directory.GetDirectories(r, ".git", SearchOption.TopDirectoryOnly).Any())
+        .ToList();
+    if (!repos.Any())
+    {
+        Console.WriteLine("No repositories found");
+        return;
+    }
+
+    Console.WriteLine("Detected repos:" + Environment.NewLine + string.Join(Environment.NewLine, repos));
+    Console.WriteLine();
+    Console.WriteLine("---PULLING STARTED---");
+    Console.WriteLine();
+
+    var responses = new List<PullResponse>();
+
+    var allTasks = repos.Select(r => PullWithHandlingAsync(r)).ToList();
+    var tasksToAwait = allTasks.Take(command.Max).ToList();
+    using var deferredTasksEnumerator = allTasks.Skip(tasksToAwait.Count).GetEnumerator();
+    while (tasksToAwait.Any())
+    {
+        var finished = await Task.WhenAny(tasksToAwait);
+        tasksToAwait.Remove(finished);
+
+        var response = await finished;
+        responses.Add(response);
+
+        PrintPullResponse(response);
+
+        if (deferredTasksEnumerator.MoveNext())
+            tasksToAwait.Add(deferredTasksEnumerator.Current);
+    }
+
+    Console.WriteLine("---PULLING FINISHED---");
+
+    var havingError = responses.Where(r => !r.IsSuccess).Select(r => r.Repo).ToList();
+    var havingChanges = responses
+        .Where(r => !r.Response.Contains("Already up to date.") &&
+                    !havingError.Contains(r.Repo))
+        .Select(r => r.Repo)
+        .ToList();
+
+    PrintAsList(havingChanges, "Changes applied");
+    PrintAsList(havingError, "Responded error");
+}
+
+void AttachDebugger()
 {
     Console.WriteLine("Attaching debugger");
     Debugger.Launch();
 }
 
-var currentDir = Directory.GetCurrentDirectory();
-Console.WriteLine("Searchinng repos in " + currentDir);
-
-var repos = Directory.GetDirectories("./", "*", SearchOption.TopDirectoryOnly)
-    .Where(r => Directory.GetDirectories(r, ".git", SearchOption.TopDirectoryOnly).Any())
-    .ToArray();
-if (!repos.Any())
-{
-    Console.WriteLine("No repositories found");
-    return;
-}
-
-Console.WriteLine("Detected repos:" + Environment.NewLine + string.Join(Environment.NewLine, repos));
-Console.WriteLine();
-Console.WriteLine("---PULLING STARTED---");
-Console.WriteLine();
-
-var processes = repos.Select(r => PullWithHandling(r)).ToList();
-var responses = new List<PullResponse>();
-while (processes.Any())
-{
-    var finished = await Task.WhenAny(processes);
-    processes.Remove(finished);
-    var response = await finished;
-    responses.Add(response);
-
-    Console.WriteLine(response.Response);
-    Console.WriteLine("---");
-    Console.WriteLine();
-}
-
-Console.WriteLine("---PULLING FINISHED---");
-
-var havingError = responses.Where(r => !r.IsSuccess).Select(r => r.Repo).ToList();
-var havingChanges = responses
-    .Where(r => !r.Response.Contains("Already up to date.") &&
-                !havingError.Contains(r.Repo))
-    .Select(r => r.Repo)
-    .ToList();
-
-PrintAsList(havingChanges, "Changes applied");
-PrintAsList(havingError, "Responded error");
 
 static void PrintAsList(List<string> items, string name)
 {
@@ -57,7 +97,7 @@ static void PrintAsList(List<string> items, string name)
     Console.WriteLine("---------------------");
 }
 
-static async Task<PullResponse> PullWithHandling(string repoPath)
+static async Task<PullResponse> PullWithHandlingAsync(string repoPath)
 {
     try
     {
@@ -71,18 +111,16 @@ static async Task<PullResponse> PullWithHandling(string repoPath)
 
 static async Task<PullResponse> Pull(string repoPath)
 {
-    using var process = new Process
+    using var process = new Process();
+    process.StartInfo = new ProcessStartInfo
     {
-        StartInfo = new ProcessStartInfo
-        {
-            FileName = "git",
-            Arguments = "branch",
-            WorkingDirectory = repoPath,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        },
+        FileName = "git",
+        Arguments = "branch",
+        WorkingDirectory = repoPath,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
     };
 
     var response = $"{repoPath}> git pull";
@@ -108,6 +146,13 @@ static async Task<ProcessResponse> RunProcessAsync(Process process, string args)
     var isSuccess = string.IsNullOrEmpty(errorResponse);
 
     return new ProcessResponse(isSuccess,  response + errorResponse);
+}
+
+void PrintPullResponse(PullResponse pullResponse)
+{
+    Console.WriteLine(pullResponse.Response);
+    Console.WriteLine("---");
+    Console.WriteLine();
 }
 
 internal record ProcessResponse(bool IsSuccess, string Response);
