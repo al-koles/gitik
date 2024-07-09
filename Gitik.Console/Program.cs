@@ -50,41 +50,24 @@ async Task ExecutePullAsync(GitPullCommand command)
     Console.WriteLine("---PULLING STARTED---");
     Console.WriteLine();
 
-    var tasks = new List<Task<PullResponse>>();
     var responses = new List<PullResponse>();
-    var reposEnumerator = repos.GetEnumerator();
-    var maxIterations = repos.Count * 2;
-    for (var i = 0; i < maxIterations; i++)
+
+    var allTasks = repos.Select(r => PullWithHandlingAsync(r)).ToList();
+    var tasksToAwait = allTasks.Take(command.Max).ToList();
+    using var deferredTasksEnumerator = allTasks.Skip(tasksToAwait.Count).GetEnumerator();
+    while (tasksToAwait.Any())
     {
-        if (tasks.Count >= command.Max)
-        {
-            var finished = await Task.WhenAny(tasks);
-            tasks.Remove(finished);
-            var response = await finished;
-            responses.Add(response);
+        var finished = await Task.WhenAny(tasksToAwait);
+        tasksToAwait.Remove(finished);
 
-            Console.WriteLine(response.Response);
-            Console.WriteLine("---");
-            Console.WriteLine();
-        }
+        var response = await finished;
+        responses.Add(response);
 
-        if (reposEnumerator.MoveNext())
-            tasks.Add(PullWithHandling(reposEnumerator.Current));
+        PrintPullResponse(response);
+
+        if (deferredTasksEnumerator.MoveNext())
+            tasksToAwait.Add(deferredTasksEnumerator.Current);
     }
-
-    // var processes = repos.Select(r => PullWithHandling(r)).ToList();
-    // await Task.Delay(10000);
-    // while (processes.Any())
-    // {
-    //     var finished = await Task.WhenAny(processes);
-    //     processes.Remove(finished);
-    //     var response = await finished;
-    //     responses.Add(response);
-    //
-    //     Console.WriteLine(response.Response);
-    //     Console.WriteLine("---");
-    //     Console.WriteLine();
-    // }
 
     Console.WriteLine("---PULLING FINISHED---");
 
@@ -114,7 +97,7 @@ static void PrintAsList(List<string> items, string name)
     Console.WriteLine("---------------------");
 }
 
-static async Task<PullResponse> PullWithHandling(string repoPath)
+static async Task<PullResponse> PullWithHandlingAsync(string repoPath)
 {
     try
     {
@@ -128,18 +111,16 @@ static async Task<PullResponse> PullWithHandling(string repoPath)
 
 static async Task<PullResponse> Pull(string repoPath)
 {
-    using var process = new Process
+    using var process = new Process();
+    process.StartInfo = new ProcessStartInfo
     {
-        StartInfo = new ProcessStartInfo
-        {
-            FileName = "git",
-            Arguments = "branch",
-            WorkingDirectory = repoPath,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        },
+        FileName = "git",
+        Arguments = "branch",
+        WorkingDirectory = repoPath,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
     };
 
     var response = $"{repoPath}> git pull";
@@ -165,6 +146,13 @@ static async Task<ProcessResponse> RunProcessAsync(Process process, string args)
     var isSuccess = string.IsNullOrEmpty(errorResponse);
 
     return new ProcessResponse(isSuccess,  response + errorResponse);
+}
+
+void PrintPullResponse(PullResponse pullResponse)
+{
+    Console.WriteLine(pullResponse.Response);
+    Console.WriteLine("---");
+    Console.WriteLine();
 }
 
 internal record ProcessResponse(bool IsSuccess, string Response);
