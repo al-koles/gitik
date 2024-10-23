@@ -52,21 +52,20 @@ async Task ExecutePullAsync(GitPullCommand command)
 
     var responses = new List<PullResponse>();
 
-    var allTasks = repos.Select(r => PullWithHandlingAsync(r)).ToList();
-    var tasksToAwait = allTasks.Take(command.Max).ToList();
-    using var deferredTasksEnumerator = allTasks.Skip(tasksToAwait.Count).GetEnumerator();
-    while (tasksToAwait.Any())
+    var currentTasks = repos.Take(command.Max).Select(r => PullWithHandlingAsync(r)).ToList();
+    var defferedRepos = repos.Skip(command.Max).GetEnumerator();
+    while (currentTasks.Any())
     {
-        var finished = await Task.WhenAny(tasksToAwait);
-        tasksToAwait.Remove(finished);
+        var finishedTask = await Task.WhenAny(currentTasks);
+        currentTasks.Remove(finishedTask);
 
-        var response = await finished;
+        var response = await finishedTask;
         responses.Add(response);
 
         PrintPullResponse(response);
 
-        if (deferredTasksEnumerator.MoveNext())
-            tasksToAwait.Add(deferredTasksEnumerator.Current);
+        if (defferedRepos.MoveNext())
+            currentTasks.Add(PullWithHandlingAsync(defferedRepos.Current));
     }
 
     Console.WriteLine("---PULLING FINISHED---");
